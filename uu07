@@ -1,5 +1,5 @@
 -- Dan FFA | Luau | Roblox Executor
--- Features: Smart Multi-Lock (Hitbox), Ultra Fast Reload, Selected ESP, Menu (Q)
+-- Features: Multi Lock (no corpses), Fast Reload, Selected ESP, Menu (Q)
 -- Devs: diorovve & sobhanlover
 
 local Players = game:GetService("Players")
@@ -19,7 +19,6 @@ local Config = {
     LockActive = false,
     ReloadThreshold = 0,
     MenuOpen = true,
-    HitboxSize = 15, -- Если начнет кикать, снизь до 3-5
 }
 
 local Running = { FastReload = false }
@@ -38,13 +37,11 @@ local function ToggleList(list, p)
     return false
 end
 
--- Жесткая проверка на живость (игнорирует трупы)
 local function IsAlive(p)
     if not p or not p.Parent or not p.Character then return false end
     local hum = p.Character:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    if hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then return false end
-    if not p.Character:FindFirstChild("HumanoidRootPart") then return false end
+    if not hum or hum.Health <= 0 then return false end
+    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
     return true
 end
 
@@ -68,54 +65,6 @@ end
 local function RefreshAllESP()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then ApplyESPTo(p) end
-    end
-end
-
--- ============ Hitbox (99% hit) ============
-local function SetHitbox(p, expand)
-    if not p or not p.Character then return end
-    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-    local head = p.Character:FindFirstChild("Head")
-    local torso = p.Character:FindFirstChild("UpperTorso") or p.Character:FindFirstChild("Torso")
-    
-    if expand then
-        if hrp and not hrp:GetAttribute("OldSize") then
-            hrp:SetAttribute("OldSize", hrp.Size)
-            hrp.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-            hrp.Transparency = 1
-            hrp.CanCollide = false
-        end
-        if head and not head:GetAttribute("OldSize") then
-            head:SetAttribute("OldSize", head.Size)
-            head.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-            head.Transparency = 1
-            head.CanCollide = false
-        end
-        if torso and not torso:GetAttribute("OldSize") then
-            torso:SetAttribute("OldSize", torso.Size)
-            torso.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-            torso.Transparency = 1
-            torso.CanCollide = false
-        end
-    else
-        if hrp and hrp:GetAttribute("OldSize") then
-            hrp.Size = hrp:GetAttribute("OldSize")
-            hrp.Transparency = 0
-            hrp.CanCollide = true
-            hrp:SetAttribute("OldSize", nil)
-        end
-        if head and head:GetAttribute("OldSize") then
-            head.Size = head:GetAttribute("OldSize")
-            head.Transparency = 0
-            head.CanCollide = true
-            head:SetAttribute("OldSize", nil)
-        end
-        if torso and torso:GetAttribute("OldSize") then
-            torso.Size = torso:GetAttribute("OldSize")
-            torso.Transparency = 0
-            torso.CanCollide = true
-            torso:SetAttribute("OldSize", nil)
-        end
     end
 end
 
@@ -240,23 +189,30 @@ local function BuildGUI()
         if state and not Running.FastReload then
             Running.FastReload = true
             task.spawn(function()
+                local lastReloadTime = 0
                 while Config.FastReload do
-                    task.wait(0.01)
+                    task.wait(0.05)
                     local char = LocalPlayer.Character
                     local tool = char and char:FindFirstChildOfClass("Tool")
                     if tool then
+                        local now = tick()
+                        if (now - lastReloadTime) < 0.1 then continue end
                         local ammo = GetAmmo(tool)
-                        if ammo ~= nil and ammo <= Config.ReloadThreshold then
-                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                            task.wait(0.01)
-                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                            task.wait(0.05)
-                        elseif ammo == nil then
-                            if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                        if ammo ~= nil then
+                            if ammo <= Config.ReloadThreshold then
                                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
                                 task.wait(0.01)
                                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                                task.wait(0.1)
+                                lastReloadTime = now
+                            end
+                        else
+                            if (now - lastReloadTime) > 0.15 then
+                                if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+                                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+                                    task.wait(0.01)
+                                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+                                    lastReloadTime = now
+                                end
                             end
                         end
                     end
@@ -419,70 +375,45 @@ UserInputService.InputEnded:Connect(function(input, gp)
     end
 end)
 
--- ============ Smart Lock & Hitbox ============
-local function GetTargetPosition(p)
-    if not p.Character then return nil end
-    local head = p.Character:FindFirstChild("Head")
-    if head then return head.Position + Vector3.new(0, 0.5, 0) end
-    local torso = p.Character:FindFirstChild("UpperTorso") or p.Character:FindFirstChild("Torso")
-    if torso then return torso.Position end
-    return nil
-end
-
+-- ============ Lock Camera ============
 RunService.RenderStepped:Connect(function()
-    if not Config.LockActive then 
-        for _, p in ipairs(Config.LockedPlayers) do
-            if p and p.Character then SetHitbox(p, false) end
-        end
-        return 
-    end
+    if not Config.LockActive then return end
     if #Config.LockedPlayers == 0 then return end
 
-    local myChar = LocalPlayer.Character
-    local myPos = myChar and myChar:FindFirstChild("HumanoidRootPart") and myChar.HumanoidRootPart.Position
+    local sum = Vector3.new(0, 0, 0)
+    local count = 0
 
-    local bestTargetPos = nil
-    local closestDist = math.huge
-
-    -- Множественный лок: перебираем всех, отсеиваем трупы, ищем ближайшего живого
+    -- Игнорируем трупы, но оставляем их в списке (вдруг респавнятся)
     for i = #Config.LockedPlayers, 1, -1 do
         local p = Config.LockedPlayers[i]
-        
-        if not IsAlive(p) then
-            SetHitbox(p, false)
-            if not p.Parent then
-                table.remove(Config.LockedPlayers, i)
-            end
+        if not p or not p.Parent or not p.Character then
+            table.remove(Config.LockedPlayers, i)
             continue
         end
+        if not IsAlive(p) then continue end
         
-        local targetPos = GetTargetPosition(p)
-        if targetPos then
-            SetHitbox(p, true)
-            if myPos then
-                local dist = (targetPos - myPos).Magnitude
-                if dist < closestDist then
-                    closestDist = dist
-                    bestTargetPos = targetPos
-                end
-            else
-                bestTargetPos = targetPos
-                break
-            end
+        local head = p.Character:FindFirstChild("Head")
+        if head then
+            sum = sum + head.Position
+            count = count + 1
         end
     end
 
-    if bestTargetPos then
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, bestTargetPos)
-        
-        local tool = myChar and myChar:FindFirstChildOfClass("Tool")
-        if tool then
-            pcall(function() tool:Activate() end)
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                task.wait(0.01)
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-            end)
-        end
+    if count > 0 then
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, sum / count)
     end
 end)
+
+-- ============ ESP on Respawn ============
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        ApplyESPTo(p)
+    end)
+end)
+for _, p in ipairs(Players:GetPlayers()) do
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        ApplyESPTo(p)
+    end)
+end
