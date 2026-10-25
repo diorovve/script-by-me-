@@ -1,11 +1,17 @@
 -- Dan FFA | Luau | Roblox Executor
--- Features: Multi Lock (no corpses), Fast Reload, Selected ESP, Menu (Q)
+-- Features: Multi Lock (Smart Target), Selected ESP, Menu (Q)
 -- Devs: diorovve & sobhanlover
+
+-- Очистка старых версий при перезапуске
+if _G.DanFFA_Active then
+    pcall(function()
+        _G.DanFFA_Active:Disconnect()
+    end)
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
@@ -13,16 +19,15 @@ local Config = {
     ESP = false,
     ESPTargets = {},
     LockedPlayers = {},
-    FastReload = false,
-    LockMode = "Hold",
-    LockBind = Enum.KeyCode.E,
+    LockMode = "Hold",          -- Hold / Press
+    LockBind = Enum.KeyCode.E,  -- E / RMB
     LockActive = false,
-    ReloadThreshold = 0,
     MenuOpen = true,
 }
 
-local Running = { FastReload = false }
 local MainFrame
+local Connections = {}
+local ToggleRegistry = {}
 
 local function InList(list, p)
     for _, x in ipairs(list) do if x == p then return true end end
@@ -37,6 +42,7 @@ local function ToggleList(list, p)
     return false
 end
 
+-- Проверка на живость (безопасная)
 local function IsAlive(p)
     if not p or not p.Parent or not p.Character then return false end
     local hum = p.Character:FindFirstChildOfClass("Humanoid")
@@ -45,11 +51,12 @@ local function IsAlive(p)
     return true
 end
 
--- ============ ESP ============
+-- ESP
 local function ApplyESPTo(p)
     if not p.Character then return end
     local shouldHave = Config.ESP and InList(Config.ESPTargets, p)
     local hl = p.Character:FindFirstChild("ShivESP")
+    
     if shouldHave and not hl then
         local h = Instance.new("Highlight")
         h.Name = "ShivESP"
@@ -68,7 +75,21 @@ local function RefreshAllESP()
     end
 end
 
--- ============ GUI ============
+-- Очистка ресурсов
+local function Cleanup()
+    for _, conn in ipairs(Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(Connections)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then
+            local hl = p.Character:FindFirstChild("ShivESP")
+            if hl then hl:Destroy() end
+        end
+    end
+end
+
+-- GUI
 local function BuildGUI()
     local MenuGui = Instance.new("ScreenGui")
     MenuGui.Name = "DanFFA_Menu"
@@ -138,6 +159,7 @@ local function BuildGUI()
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = btn
+        table.insert(ToggleRegistry, {button = btn, text = text, key = key})
         btn.MouseButton1Click:Connect(function()
             Config[key] = not Config[key]
             btn.Text = text .. ": " .. (Config[key] and "ON" or "OFF")
@@ -173,55 +195,6 @@ local function BuildGUI()
 
     CreateToggle("ESP (only selected)", "ESP", function() RefreshAllESP() end)
 
-    local function GetAmmo(tool)
-        for _, name in ipairs({"Ammo", "CurrentAmmo", "AmmoCount", "Clip", "Bullets", "FireCount"}) do
-            local attr = tool:GetAttribute(name)
-            if type(attr) == "number" then return attr end
-            local child = tool:FindFirstChild(name)
-            if child and child:IsA("ValueBase") and type(child.Value) == "number" then
-                return child.Value
-            end
-        end
-        return nil
-    end
-
-    CreateToggle("Fast Reload", "FastReload", function(state)
-        if state and not Running.FastReload then
-            Running.FastReload = true
-            task.spawn(function()
-                local lastReloadTime = 0
-                while Config.FastReload do
-                    task.wait(0.05)
-                    local char = LocalPlayer.Character
-                    local tool = char and char:FindFirstChildOfClass("Tool")
-                    if tool then
-                        local now = tick()
-                        if (now - lastReloadTime) < 0.1 then continue end
-                        local ammo = GetAmmo(tool)
-                        if ammo ~= nil then
-                            if ammo <= Config.ReloadThreshold then
-                                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                                task.wait(0.01)
-                                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                                lastReloadTime = now
-                            end
-                        else
-                            if (now - lastReloadTime) > 0.15 then
-                                if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-                                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-                                    task.wait(0.01)
-                                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-                                    lastReloadTime = now
-                                end
-                            end
-                        end
-                    end
-                end
-                Running.FastReload = false
-            end)
-        end
-    end)
-
     CreateChoice("Lock Mode", "LockMode", {
         {label = "Hold", value = "Hold"},
         {label = "Press", value = "Press"},
@@ -231,6 +204,7 @@ local function BuildGUI()
         {label = "RMB", value = Enum.UserInputType.MouseButton2},
     })
 
+    -- Список игроков
     local PlayerList = Instance.new("Frame")
     PlayerList.Size = UDim2.new(1, -4, 0, 280)
     PlayerList.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
@@ -312,24 +286,29 @@ local function BuildGUI()
                     local espBtn = row:FindFirstChild("EspBtn")
                     local locked = InList(Config.LockedPlayers, p)
                     local espOn = InList(Config.ESPTargets, p)
-                    nameLbl.Text = p.DisplayName .. " (@" .. p.Name .. ")"
-                    nameLbl.TextColor3 = locked and Color3.fromRGB(255, 150, 150) or Color3.fromRGB(200, 200, 220)
-                    lockBtn.Text = locked and "LOCK ✓" or "LOCK"
-                    lockBtn.BackgroundColor3 = locked and Color3.fromRGB(120, 30, 30) or Color3.fromRGB(45, 45, 55)
-                    lockBtn.TextColor3 = Color3.fromRGB(240, 220, 220)
-                    espBtn.Text = espOn and "ESP ✓" or "ESP"
-                    espBtn.BackgroundColor3 = espOn and Color3.fromRGB(30, 100, 50) or Color3.fromRGB(45, 45, 55)
-                    espBtn.TextColor3 = Color3.fromRGB(220, 240, 220)
+                    
+                    pcall(function()
+                        nameLbl.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+                        nameLbl.TextColor3 = locked and Color3.fromRGB(255, 150, 150) or Color3.fromRGB(200, 200, 220)
+                        lockBtn.Text = locked and "LOCK ✓" or "LOCK"
+                        lockBtn.BackgroundColor3 = locked and Color3.fromRGB(120, 30, 30) or Color3.fromRGB(45, 45, 55)
+                        lockBtn.TextColor3 = Color3.fromRGB(240, 220, 220)
+                        espBtn.Text = espOn and "ESP ✓" or "ESP"
+                        espBtn.BackgroundColor3 = espOn and Color3.fromRGB(30, 100, 50) or Color3.fromRGB(45, 45, 55)
+                        espBtn.TextColor3 = Color3.fromRGB(220, 240, 220)
+                    end)
                     existing[key] = nil
                 end
             end
             for _, row in pairs(existing) do row:Destroy() end
         end)
     end
+    
     _G.ShivRefreshPlayers = RefreshPlayerList
     RefreshPlayerList()
-    Players.PlayerAdded:Connect(function() task.wait(0.3) RefreshPlayerList() end)
-    Players.PlayerRemoving:Connect(function(p)
+    
+    table.insert(Connections, Players.PlayerAdded:Connect(function() task.wait(0.3) RefreshPlayerList() end))
+    table.insert(Connections, Players.PlayerRemoving:Connect(function(p)
         for i = #Config.LockedPlayers, 1, -1 do
             if Config.LockedPlayers[i] == p then table.remove(Config.LockedPlayers, i) end
         end
@@ -338,7 +317,7 @@ local function BuildGUI()
         end
         task.wait(0.3)
         RefreshPlayerList()
-    end)
+    end))
 
     ToggleBtn.MouseButton1Click:Connect(function()
         Config.MenuOpen = not Config.MenuOpen
@@ -348,8 +327,8 @@ end
 
 pcall(BuildGUI)
 
--- ============ Input ============
-UserInputService.InputBegan:Connect(function(input, gp)
+-- Ввод
+table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.Q then
         Config.MenuOpen = not Config.MenuOpen
@@ -365,52 +344,70 @@ UserInputService.InputBegan:Connect(function(input, gp)
             Config.LockActive = true
         end
     end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(input, gp)
+table.insert(Connections, UserInputService.InputEnded:Connect(function(input, gp)
     local bind = Config.LockBind
     local matched = (input.KeyCode == bind) or (input.UserInputType == bind)
     if matched and Config.LockMode == "Hold" then
         Config.LockActive = false
     end
-end)
+end))
 
 -- ============ Lock Camera ============
-RunService.RenderStepped:Connect(function()
+local LockConnection = RunService.RenderStepped:Connect(function()
     if not Config.LockActive then return end
     if #Config.LockedPlayers == 0 then return end
 
-    local sum = Vector3.new(0, 0, 0)
-    local count = 0
+    local bestTargetPos = nil
+    local shortestDist = math.huge
+    
+    local myChar = LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-    -- Игнорируем трупы, но оставляем их в списке (вдруг респавнятся)
     for i = #Config.LockedPlayers, 1, -1 do
         local p = Config.LockedPlayers[i]
         if not p or not p.Parent or not p.Character then
             table.remove(Config.LockedPlayers, i)
             continue
         end
+        
+        -- Игнорируем мертвых
         if not IsAlive(p) then continue end
         
         local head = p.Character:FindFirstChild("Head")
         if head then
-            sum = sum + head.Position
-            count = count + 1
+            -- Если у нас есть HRP, выбираем ближайшего. Если нет - берем первого.
+            if myHRP then
+                local dist = (head.Position - myHRP.Position).Magnitude
+                if dist < shortestDist then
+                    shortestDist = dist
+                    bestTargetPos = head.Position
+                end
+            else
+                bestTargetPos = head.Position
+                break
+            end
         end
     end
 
-    if count > 0 then
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, sum / count)
+    if bestTargetPos then
+        -- Плавная наводка камеры (без рывков и телепортов)
+        local currentCFrame = Camera.CFrame
+        local targetCFrame = CFrame.new(currentCFrame.Position, bestTargetPos)
+        Camera.CFrame = currentCFrame:Lerp(targetCFrame, 0.5)
     end
 end)
 
--- ============ ESP on Respawn ============
-Players.PlayerAdded:Connect(function(p)
+_G.DanFFA_Active = LockConnection
+
+-- ESP на респавн
+table.insert(Connections, Players.PlayerAdded:Connect(function(p)
     p.CharacterAdded:Connect(function()
         task.wait(1)
         ApplyESPTo(p)
     end)
-end)
+end))
 for _, p in ipairs(Players:GetPlayers()) do
     p.CharacterAdded:Connect(function()
         task.wait(1)
