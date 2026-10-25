@@ -1,5 +1,5 @@
 -- Dan FFA | Luau | Roblox Executor
--- Features: Multi Lock (Smart Target), Selected ESP, Menu (Q), Custom Background
+-- Features: Multi Lock, Selected ESP, Fullscreen Background, Menu (Q)
 -- Devs: diorovve & sobhanlover
 
 if _G.DanFFA_Active then
@@ -12,7 +12,8 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
-local BG_IMAGE_ID = "https://i.imgur.com/kE7XhPa.jpeg"
+-- ID картинки (rbxassetid://1316045217 - стандартный градиент Roblox)
+local BG_IMAGE_ID = "rbxassetid://1316045217" 
 
 local Config = {
     ESP = false,
@@ -22,9 +23,11 @@ local Config = {
     LockBind = Enum.KeyCode.E,
     LockActive = false,
     MenuOpen = true,
+    FullscreenBG = false, -- По умолчанию выключен
 }
 
 local MainFrame
+local FullscreenImage
 local Connections = {}
 
 local function InList(list, p)
@@ -74,8 +77,21 @@ local function BuildGUI()
     local MenuGui = Instance.new("ScreenGui")
     MenuGui.Name = "DanFFA_Menu"
     MenuGui.ResetOnSpawn = false
+    MenuGui.DisplayOrder = 999
     MenuGui.Parent = game:GetService("CoreGui")
     
+    -- ПОЛНОЭКРАННЫЙ ФОН
+    FullscreenImage = Instance.new("ImageLabel")
+    FullscreenImage.Name = "FullscreenBG"
+    FullscreenImage.Size = UDim2.new(1, 0, 1, 0) -- Растягиваем на 100% экрана
+    FullscreenImage.BackgroundTransparency = 1
+    FullscreenImage.Image = BG_IMAGE_ID
+    FullscreenImage.ImageTransparency = 0.5 -- Полупрозрачный, чтобы игра просвечивала
+    FullscreenImage.ScaleType = Enum.ScaleType.Crop
+    FullscreenImage.ZIndex = 0
+    FullscreenImage.Visible = Config.FullscreenBG
+    FullscreenImage.Parent = MenuGui
+
     local ToggleBtn = Instance.new("TextButton")
     ToggleBtn.Size = UDim2.new(0, 40, 0, 40)
     ToggleBtn.Position = UDim2.new(0, 20, 0.5, -20)
@@ -84,6 +100,7 @@ local function BuildGUI()
     ToggleBtn.TextColor3 = Color3.fromRGB(200, 200, 255)
     ToggleBtn.Font = Enum.Font.GothamBold
     ToggleBtn.TextSize = 16
+    ToggleBtn.ZIndex = 10
     ToggleBtn.Parent = MenuGui
     local TBtnCorner = Instance.new("UICorner")
     TBtnCorner.CornerRadius = UDim.new(0, 8)
@@ -99,20 +116,22 @@ local function BuildGUI()
     MainFrame.Draggable = true
     MainFrame.Visible = Config.MenuOpen
     MainFrame.ClipsDescendants = true
+    MainFrame.ZIndex = 5
     MainFrame.Parent = MenuGui
     local UICorner = Instance.new("UICorner")
     UICorner.CornerRadius = UDim.new(0, 8)
     UICorner.Parent = MainFrame
 
+    -- Фон внутри меню
     if BG_IMAGE_ID ~= "" then
         local BgImage = Instance.new("ImageLabel")
         BgImage.Name = "BackgroundImage"
         BgImage.Size = UDim2.new(1, 0, 1, 0)
         BgImage.BackgroundTransparency = 1
         BgImage.Image = BG_IMAGE_ID
-        BgImage.ImageTransparency = 0.3
+        BgImage.ImageTransparency = 0.4
         BgImage.ScaleType = Enum.ScaleType.Crop
-        BgImage.ZIndex = 0
+        BgImage.ZIndex = 6
         BgImage.Parent = MainFrame
         local BgCorner = Instance.new("UICorner")
         BgCorner.CornerRadius = UDim.new(0, 8)
@@ -122,13 +141,13 @@ local function BuildGUI()
     local Title = Instance.new("TextLabel")
     Title.Size = UDim2.new(1, 0, 0, 35)
     Title.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
-    Title.BackgroundTransparency = 0.3
+    Title.BackgroundTransparency = 0.2
     Title.Text = "  Dan FFA | diorovve & sobhanlover"
     Title.TextColor3 = Color3.fromRGB(200, 200, 255)
     Title.TextXAlignment = Enum.TextXAlignment.Left
     Title.Font = Enum.Font.GothamBold
     Title.TextSize = 12
-    Title.ZIndex = 2
+    Title.ZIndex = 7
     Title.Parent = MainFrame
     local TitleCorner = Instance.new("UICorner")
     TitleCorner.CornerRadius = UDim.new(0, 8)
@@ -141,7 +160,7 @@ local function BuildGUI()
     Scroll.ScrollBarThickness = 4
     Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    Scroll.ZIndex = 2
+    Scroll.ZIndex = 7
     Scroll.Parent = MainFrame
     local Layout = Instance.new("UIListLayout")
     Layout.Padding = UDim.new(0, 4)
@@ -156,7 +175,7 @@ local function BuildGUI()
         btn.TextColor3 = Color3.fromRGB(180, 180, 200)
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 12
-        btn.ZIndex = 3
+        btn.ZIndex = 8
         btn.Parent = Scroll
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 6)
@@ -178,7 +197,7 @@ local function BuildGUI()
         btn.TextColor3 = Color3.fromRGB(180, 180, 200)
         btn.Font = Enum.Font.Gotham
         btn.TextSize = 12
-        btn.ZIndex = 3
+        btn.ZIndex = 8
         btn.Parent = Scroll
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 6)
@@ -196,6 +215,13 @@ local function BuildGUI()
         return btn
     end
 
+    -- Тумблер полноэкранного фона
+    CreateToggle("Fullscreen BG", "FullscreenBG", function(state)
+        if FullscreenImage then
+            FullscreenImage.Visible = state
+        end
+    end)
+
     CreateToggle("ESP (only selected)", "ESP", function() RefreshAllESP() end)
 
     CreateChoice("Lock Mode", "LockMode", {
@@ -210,8 +236,8 @@ local function BuildGUI()
     local PlayerList = Instance.new("Frame")
     PlayerList.Size = UDim2.new(1, -4, 0, 280)
     PlayerList.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-    PlayerList.BackgroundTransparency = 0.3
-    PlayerList.ZIndex = 3
+    PlayerList.BackgroundTransparency = 0.2
+    PlayerList.ZIndex = 8
     PlayerList.Parent = Scroll
     local PlayerListCorner = Instance.new("UICorner")
     PlayerListCorner.CornerRadius = UDim.new(0, 6)
@@ -224,7 +250,7 @@ local function BuildGUI()
     PScroll.ScrollBarThickness = 3
     PScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     PScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    PScroll.ZIndex = 4
+    PScroll.ZIndex = 9
     PScroll.Parent = PlayerList
     local PLayout = Instance.new("UIListLayout")
     PLayout.Padding = UDim.new(0, 3)
@@ -245,7 +271,7 @@ local function BuildGUI()
                         row.Name = key
                         row.Size = UDim2.new(1, -4, 0, 28)
                         row.BackgroundTransparency = 1
-                        row.ZIndex = 5
+                        row.ZIndex = 9
                         row.Parent = PScroll
 
                         local nameLbl = Instance.new("TextLabel")
@@ -257,7 +283,7 @@ local function BuildGUI()
                         nameLbl.TextColor3 = Color3.fromRGB(200, 200, 220)
                         nameLbl.Font = Enum.Font.Gotham
                         nameLbl.TextSize = 11
-                        nameLbl.ZIndex = 5
+                        nameLbl.ZIndex = 9
                         nameLbl.Parent = row
 
                         local lockBtn = Instance.new("TextButton")
@@ -266,7 +292,7 @@ local function BuildGUI()
                         lockBtn.Position = UDim2.new(1, -108, 0, 2)
                         lockBtn.Font = Enum.Font.GothamBold
                         lockBtn.TextSize = 10
-                        lockBtn.ZIndex = 6
+                        lockBtn.ZIndex = 10
                         lockBtn.Parent = row
                         local c1 = Instance.new("UICorner"); c1.CornerRadius = UDim.new(0, 4); c1.Parent = lockBtn
 
@@ -276,7 +302,7 @@ local function BuildGUI()
                         espBtn.Position = UDim2.new(1, -56, 0, 2)
                         espBtn.Font = Enum.Font.GothamBold
                         espBtn.TextSize = 10
-                        espBtn.ZIndex = 6
+                        espBtn.ZIndex = 10
                         espBtn.Parent = row
                         local c2 = Instance.new("UICorner"); c2.CornerRadius = UDim.new(0, 4); c2.Parent = espBtn
 
