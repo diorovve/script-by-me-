@@ -1,5 +1,5 @@
 -- Dan FFA | Luau | Roblox Executor
--- Features: Smart Lock (Hitbox + Auto-Switch), Ultra Fast Reload, Selected ESP
+-- Features: Smart Multi-Lock (Hitbox), Ultra Fast Reload, Selected ESP, Menu (Q)
 -- Devs: diorovve & sobhanlover
 
 local Players = game:GetService("Players")
@@ -19,7 +19,7 @@ local Config = {
     LockActive = false,
     ReloadThreshold = 0,
     MenuOpen = true,
-    HitboxSize = 15,
+    HitboxSize = 15, -- Если начнет кикать, снизь до 3-5
 }
 
 local Running = { FastReload = false }
@@ -38,11 +38,13 @@ local function ToggleList(list, p)
     return false
 end
 
+-- Жесткая проверка на живость (игнорирует трупы)
 local function IsAlive(p)
     if not p or not p.Parent or not p.Character then return false end
     local hum = p.Character:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    if not hum then return false end
+    if hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    if not p.Character:FindFirstChild("HumanoidRootPart") then return false end
     return true
 end
 
@@ -429,7 +431,6 @@ end
 
 RunService.RenderStepped:Connect(function()
     if not Config.LockActive then 
-        -- Если лок выключен, убираем хитбоксы
         for _, p in ipairs(Config.LockedPlayers) do
             if p and p.Character then SetHitbox(p, false) end
         end
@@ -443,21 +444,21 @@ RunService.RenderStepped:Connect(function()
     local bestTargetPos = nil
     local closestDist = math.huge
 
+    -- Множественный лок: перебираем всех, отсеиваем трупы, ищем ближайшего живого
     for i = #Config.LockedPlayers, 1, -1 do
         local p = Config.LockedPlayers[i]
         
-        -- Авто-переключение: удаляем трупы
         if not IsAlive(p) then
             SetHitbox(p, false)
-            table.remove(Config.LockedPlayers, i)
+            if not p.Parent then
+                table.remove(Config.LockedPlayers, i)
+            end
             continue
         end
         
         local targetPos = GetTargetPosition(p)
         if targetPos then
-            -- Включаем хитбокс на живых
             SetHitbox(p, true)
-            
             if myPos then
                 local dist = (targetPos - myPos).Magnitude
                 if dist < closestDist then
